@@ -395,6 +395,7 @@ class FeatureSwingMode(MIoTServiceEntity, ClimateEntity):
 class FeatureTemperature(MIoTServiceEntity, ClimateEntity):
     """Temperature of the climate entity."""
     _prop_env_temperature: Optional[MIoTSpecProperty]
+    _external_temperature_entity_id: Optional[str]
 
     def __init__(self, miot_device: MIoTDevice,
                  entity_data: MIoTEntityData) -> None:
@@ -411,25 +412,9 @@ class FeatureTemperature(MIoTServiceEntity, ClimateEntity):
     @property
     def current_temperature(self) -> Optional[float]:
         """The current environment temperature."""
-        return (self.get_prop_value(prop=self._prop_env_temperature)
-                if self._prop_env_temperature else None)
+        if self._prop_env_temperature:
+            return self.get_prop_value(prop=self._prop_env_temperature)
 
-
-class FeatureExternalTemperature(MIoTServiceEntity, ClimateEntity):
-    """External temperature sensor for climate entity."""
-    _external_temperature_entity_id: Optional[str]
-
-    def __init__(self, miot_device: MIoTDevice,
-                 entity_data: MIoTEntityData,
-                 external_temp_entity_id: Optional[str] = None) -> None:
-        """Initialize the feature class."""
-        self._external_temperature_entity_id = external_temp_entity_id
-
-        super().__init__(miot_device=miot_device, entity_data=entity_data)
-
-    @property
-    def current_temperature(self) -> Optional[float]:
-        """The current temperature from external sensor."""
         if not self._external_temperature_entity_id:
             return None
         
@@ -437,7 +422,6 @@ class FeatureExternalTemperature(MIoTServiceEntity, ClimateEntity):
         state: State = self.hass.states.get(self._external_temperature_entity_id)
         if state is None or state.state in ['unknown', 'unavailable']:
             return None
-        
         try:
             return float(state.state)
         except (ValueError, TypeError):
