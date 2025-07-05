@@ -402,6 +402,7 @@ class FeatureTemperature(MIoTServiceEntity, ClimateEntity):
         """Initialize the feature class."""
         self._prop_env_temperature = None
 
+        _LOGGER.debug("Modified Temperature Initializing")
         super().__init__(miot_device=miot_device, entity_data=entity_data)
         # properties
         for prop in entity_data.props:
@@ -412,12 +413,16 @@ class FeatureTemperature(MIoTServiceEntity, ClimateEntity):
     @property
     def current_temperature(self) -> Optional[float]:
         """The current environment temperature."""
+        _LOGGER.debug("Current temperature called.")
         if self._prop_env_temperature:
             return self.get_prop_value(prop=self._prop_env_temperature)
 
+        _LOGGER.debug("pre: Using external temperature")
         if not self._external_temperature_entity_id:
             return None
         
+        _LOGGER.debug("pre: Using external temperature, id getten: %s", 
+                      self._external_temperature_entity_id)
         # Get the state of the external temperature sensor
         state: State = self.hass.states.get(self._external_temperature_entity_id)
         if state is None or state.state in ['unknown', 'unavailable']:
@@ -725,23 +730,23 @@ class AirConditioner(FeatureOnOff, FeatureTargetTemperature,
         self._value_ac_state.update(v_ac_state)
         _LOGGER.debug('ac_state update, %s', self._value_ac_state)
 
-    @property
-    def current_temperature(self) -> Optional[float]:
-        """The current temperature - use external sensor if configured."""
-        if self._external_temp_entity_id:
-            # Use external temperature sensor
-            state = self.hass.states.get(self._external_temp_entity_id)
-            if state is not None and state.state not in ['unknown', 'unavailable']:
-                try:
-                    return float(state.state)
-                except (ValueError, TypeError):
-                    _LOGGER.warning(
-                        'Invalid external temperature value from %s: %s',
-                        self._external_temp_entity_id, state.state)
+    # @property
+    # def current_temperature(self) -> Optional[float]:
+    #     """The current temperature - use external sensor if configured."""
+    #     if self._external_temp_entity_id:
+    #         # Use external temperature sensor
+    #         state = self.hass.states.get(self._external_temp_entity_id)
+    #         if state is not None and state.state not in ['unknown', 'unavailable']:
+    #             try:
+    #                 return float(state.state)
+    #             except (ValueError, TypeError):
+    #                 _LOGGER.warning(
+    #                     'Invalid external temperature value from %s: %s',
+    #                     self._external_temp_entity_id, state.state)
         
-        # Fall back to internal temperature sensor
-        return (self.get_prop_value(prop=self._prop_env_temperature)
-                if self._prop_env_temperature else None)
+    #     # Fall back to internal temperature sensor
+    #     return (self.get_prop_value(prop=self._prop_env_temperature)
+    #             if self._prop_env_temperature else None)
 
 
 class PtcBathHeater(FeatureTargetTemperature, FeatureTemperature,
