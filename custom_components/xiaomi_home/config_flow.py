@@ -1018,6 +1018,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
     _trans_rules_count: int
     _trans_rules_count_success: int
+    
+    _external_temp_sensors: dict
 
     _need_reload: bool
 
@@ -1076,6 +1078,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         self._opt_check_network_deps = False
         self._trans_rules_count = 0
         self._trans_rules_count_success = 0
+        self._external_temp_sensors = {}
 
         self._need_reload = False
 
@@ -1344,13 +1347,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         'update_trans_rules',
                         default=self._update_trans_rules  # type: ignore
                     ): bool,
+                    # External temperature sensor configure
+                    vol.Optional(
+                        'external_temperature_sensors',
+                        default=self._entry_data.get('external_temperature_sensors', {})  # type: ignore
+                    ): cv.string,
                 }),
                 errors={},
                 description_placeholders={
                     'nick_name': self._nick_name,
                     'uid': self._uid,
                     'cloud_server': CLOUD_SERVERS[self._cloud_server],
-                    'instance_id': f'ha.{self._entry_data["uuid"]}'
+                    'instance_id': f'ha.{self._entry_data["uuid"]}',
+                    'external_temp_help': (
+                        'Configure external temperature sensors for climate entities. '
+                        'Format: climate_entity_id:sensor_entity_id,climate_entity_id2:sensor_entity_id2 '
+                        'Example: climate.lumi_cn_749560338_mcn02:sensor.temperature'
+                    )
                 },
                 last_step=False,
             )
@@ -1378,6 +1391,23 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             'update_lan_ctrl_config', self._opt_lan_ctrl_cfg)
         self._opt_network_detect_cfg = user_input.get(
             'network_detect_config', self._opt_network_detect_cfg)
+        
+        # Process external temperature sensors
+        external_temp_sensors_str = user_input.get(
+            'external_temperature_sensors', '')
+        if external_temp_sensors_str:
+            external_temp_sensors = {}
+            try:
+                # Parse the configuration string: "climate_entity_id:sensor_entity_id,climate_entity_id2:sensor_entity_id2"
+                for pair in external_temp_sensors_str.split(','):
+                    if ':' in pair:
+                        climate_id, sensor_id = pair.strip().split(':', 1)
+                        external_temp_sensors[climate_id.strip()] = sensor_id.strip()
+                self._external_temp_sensors = external_temp_sensors
+            except Exception:
+                self._external_temp_sensors = {}
+        else:
+            self._external_temp_sensors = {}
 
         return await self.async_step_update_user_info()
 
@@ -1988,6 +2018,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         # Update display_devices_changed_notify
         self._entry_data['display_devices_changed_notify'] = (
             self._display_devs_notify)
+        # Update external temperature sensors
+        if self._external_temp_sensors:
+            self._entry_data['external_temperature_sensors'] = self._external_temp_sensors
+            self._need_reload = True
         self._miot_client.display_devices_changed_notify = (
             self._display_devs_notify)
         if (

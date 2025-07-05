@@ -50,9 +50,10 @@ import logging
 from typing import Any, Optional
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, State
 from homeassistant.const import UnitOfTemperature
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.components.climate import (
     FAN_ON, FAN_OFF, SWING_OFF, SWING_BOTH, SWING_VERTICAL, SWING_HORIZONTAL,
     ATTR_TEMPERATURE, HVACMode, HVACAction, ClimateEntity, ClimateEntityFeature)
@@ -69,24 +70,58 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry,
     """Set up a config entry."""
     device_list: list[MIoTDevice] = hass.data[DOMAIN]['devices'][
         config_entry.entry_id]
+    
+    # Get external temperature sensors configuration
+    external_temp_sensors = config_entry.data.get('external_temperature_sensors', {})
 
     new_entities = []
     for miot_device in device_list:
         for data in miot_device.entity_list.get('air-conditioner', []):
-            new_entities.append(
-                AirConditioner(miot_device=miot_device, entity_data=data))
+            # Create the entity first to get its entity_id
+            entity = AirConditioner(miot_device=miot_device, entity_data=data)
+            entity_id = entity.entity_id
+            external_temp_entity_id = external_temp_sensors.get(entity_id)
+            if external_temp_entity_id:
+                # Recreate with external temp sensor
+                entity = AirConditioner(miot_device=miot_device, entity_data=data,
+                                      external_temp_entity_id=external_temp_entity_id)
+            new_entities.append(entity)
+            
         for data in miot_device.entity_list.get('heater', []):
-            new_entities.append(
-                Heater(miot_device=miot_device, entity_data=data))
+            entity = Heater(miot_device=miot_device, entity_data=data)
+            entity_id = entity.entity_id
+            external_temp_entity_id = external_temp_sensors.get(entity_id)
+            if external_temp_entity_id:
+                entity = Heater(miot_device=miot_device, entity_data=data,
+                              external_temp_entity_id=external_temp_entity_id)
+            new_entities.append(entity)
+            
         for data in miot_device.entity_list.get('bath-heater', []):
-            new_entities.append(
-                PtcBathHeater(miot_device=miot_device, entity_data=data))
+            entity = PtcBathHeater(miot_device=miot_device, entity_data=data)
+            entity_id = entity.entity_id
+            external_temp_entity_id = external_temp_sensors.get(entity_id)
+            if external_temp_entity_id:
+                entity = PtcBathHeater(miot_device=miot_device, entity_data=data,
+                                     external_temp_entity_id=external_temp_entity_id)
+            new_entities.append(entity)
+            
         for data in miot_device.entity_list.get('thermostat', []):
-            new_entities.append(
-                Thermostat(miot_device=miot_device, entity_data=data))
+            entity = Thermostat(miot_device=miot_device, entity_data=data)
+            entity_id = entity.entity_id
+            external_temp_entity_id = external_temp_sensors.get(entity_id)
+            if external_temp_entity_id:
+                entity = Thermostat(miot_device=miot_device, entity_data=data,
+                                  external_temp_entity_id=external_temp_entity_id)
+            new_entities.append(entity)
+            
         for data in miot_device.entity_list.get('electric-blanket', []):
-            new_entities.append(
-                ElectricBlanket(miot_device=miot_device, entity_data=data))
+            entity = ElectricBlanket(miot_device=miot_device, entity_data=data)
+            entity_id = entity.entity_id
+            external_temp_entity_id = external_temp_sensors.get(entity_id)
+            if external_temp_entity_id:
+                entity = ElectricBlanket(miot_device=miot_device, entity_data=data,
+                                       external_temp_entity_id=external_temp_entity_id)
+            new_entities.append(entity)
 
     if new_entities:
         async_add_entities(new_entities)
@@ -380,6 +415,38 @@ class FeatureTemperature(MIoTServiceEntity, ClimateEntity):
                 if self._prop_env_temperature else None)
 
 
+class FeatureExternalTemperature(MIoTServiceEntity, ClimateEntity):
+    """External temperature sensor for climate entity."""
+    _external_temperature_entity_id: Optional[str]
+
+    def __init__(self, miot_device: MIoTDevice,
+                 entity_data: MIoTEntityData,
+                 external_temp_entity_id: Optional[str] = None) -> None:
+        """Initialize the feature class."""
+        self._external_temperature_entity_id = external_temp_entity_id
+
+        super().__init__(miot_device=miot_device, entity_data=entity_data)
+
+    @property
+    def current_temperature(self) -> Optional[float]:
+        """The current temperature from external sensor."""
+        if not self._external_temperature_entity_id:
+            return None
+        
+        # Get the state of the external temperature sensor
+        state: State = self.hass.states.get(self._external_temperature_entity_id)
+        if state is None or state.state in ['unknown', 'unavailable']:
+            return None
+        
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            _LOGGER.warning(
+                'Invalid external temperature value from %s: %s',
+                self._external_temperature_entity_id, state.state)
+            return None
+
+
 class FeatureHumidity(MIoTServiceEntity, ClimateEntity):
     """Humidity of the climate entity."""
     _prop_env_humidity: Optional[MIoTSpecProperty]
@@ -449,7 +516,8 @@ class Heater(FeatureOnOff, FeatureTargetTemperature, FeatureTemperature,
     """Heater"""
 
     def __init__(self, miot_device: MIoTDevice,
-                 entity_data: MIoTEntityData) -> None:
+                 entity_data: MIoTEntityData,
+                 external_temp_entity_id: Optional[str] = None) -> None:
         """Initialize the heater."""
         super().__init__(miot_device=miot_device, entity_data=entity_data)
 
@@ -460,6 +528,13 @@ class Heater(FeatureOnOff, FeatureTargetTemperature, FeatureTemperature,
         self._init_on_off('heater', 'on')
         # preset modes
         self._init_preset_modes('heater', 'heat-level')
+        
+        # Set up external temperature sensor if configured
+        self._external_temp_entity_id = external_temp_entity_id
+        if external_temp_entity_id:
+            _LOGGER.info(
+                'Using external temperature sensor %s for heater %s',
+                external_temp_entity_id, self.entity_id)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set the target hvac mode."""
@@ -480,6 +555,24 @@ class Heater(FeatureOnOff, FeatureTargetTemperature, FeatureTemperature,
             return HVACAction.HEATING
         return HVACAction.OFF
 
+    @property
+    def current_temperature(self) -> Optional[float]:
+        """The current temperature - use external sensor if configured."""
+        if self._external_temp_entity_id:
+            # Use external temperature sensor
+            state = self.hass.states.get(self._external_temp_entity_id)
+            if state is not None and state.state not in ['unknown', 'unavailable']:
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    _LOGGER.warning(
+                        'Invalid external temperature value from %s: %s',
+                        self._external_temp_entity_id, state.state)
+        
+        # Fall back to internal temperature sensor
+        return (self.get_prop_value(prop=self._prop_env_temperature)
+                if self._prop_env_temperature else None)
+
 
 class AirConditioner(FeatureOnOff, FeatureTargetTemperature,
                      FeatureTargetHumidity, FeatureTemperature, FeatureHumidity,
@@ -491,7 +584,8 @@ class AirConditioner(FeatureOnOff, FeatureTargetTemperature,
     _value_ac_state: Optional[dict[str, int]]
 
     def __init__(self, miot_device: MIoTDevice,
-                 entity_data: MIoTEntityData) -> None:
+                 entity_data: MIoTEntityData,
+                 external_temp_entity_id: Optional[str] = None) -> None:
         """Initialize the air conditioner."""
         self._prop_mode = None
         self._hvac_mode_map = None
@@ -502,6 +596,13 @@ class AirConditioner(FeatureOnOff, FeatureTargetTemperature,
         self._attr_icon = 'mdi:air-conditioner'
         # on/off
         self._init_on_off('air-conditioner', 'on')
+        
+        # Set up external temperature sensor if configured
+        self._external_temp_entity_id = external_temp_entity_id
+        if external_temp_entity_id:
+            _LOGGER.info(
+                'Using external temperature sensor %s for air conditioner %s',
+                external_temp_entity_id, self.entity_id)
         # hvac modes
         self._attr_hvac_modes = None
         for prop in entity_data.props:
@@ -640,6 +741,24 @@ class AirConditioner(FeatureOnOff, FeatureTargetTemperature,
         self._value_ac_state.update(v_ac_state)
         _LOGGER.debug('ac_state update, %s', self._value_ac_state)
 
+    @property
+    def current_temperature(self) -> Optional[float]:
+        """The current temperature - use external sensor if configured."""
+        if self._external_temp_entity_id:
+            # Use external temperature sensor
+            state = self.hass.states.get(self._external_temp_entity_id)
+            if state is not None and state.state not in ['unknown', 'unavailable']:
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    _LOGGER.warning(
+                        'Invalid external temperature value from %s: %s',
+                        self._external_temp_entity_id, state.state)
+        
+        # Fall back to internal temperature sensor
+        return (self.get_prop_value(prop=self._prop_env_temperature)
+                if self._prop_env_temperature else None)
+
 
 class PtcBathHeater(FeatureTargetTemperature, FeatureTemperature,
                     FeatureFanMode, FeatureSwingMode, FeaturePresetMode):
@@ -648,13 +767,21 @@ class PtcBathHeater(FeatureTargetTemperature, FeatureTemperature,
     _hvac_mode_map: Optional[dict[int, HVACMode]]
 
     def __init__(self, miot_device: MIoTDevice,
-                 entity_data: MIoTEntityData) -> None:
+                 entity_data: MIoTEntityData,
+                 external_temp_entity_id: Optional[str] = None) -> None:
         """Initialize the ptc bath heater."""
         self._prop_mode = None
         self._hvac_mode_map = None
 
         super().__init__(miot_device=miot_device, entity_data=entity_data)
         self._attr_icon = 'mdi:hvac'
+        
+        # Set up external temperature sensor if configured
+        self._external_temp_entity_id = external_temp_entity_id
+        if external_temp_entity_id:
+            _LOGGER.info(
+                'Using external temperature sensor %s for ptc bath heater %s',
+                external_temp_entity_id, self.entity_id)
         # hvac modes
         for prop in entity_data.props:
             if prop.name == 'mode' and prop.service.name == 'ptc-bath-heater':
@@ -695,13 +822,32 @@ class PtcBathHeater(FeatureTargetTemperature, FeatureTemperature,
                                         key=current_mode)
         return HVACMode.OFF if mode_value == HVACMode.OFF else HVACMode.AUTO
 
+    @property
+    def current_temperature(self) -> Optional[float]:
+        """The current temperature - use external sensor if configured."""
+        if self._external_temp_entity_id:
+            # Use external temperature sensor
+            state = self.hass.states.get(self._external_temp_entity_id)
+            if state is not None and state.state not in ['unknown', 'unavailable']:
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    _LOGGER.warning(
+                        'Invalid external temperature value from %s: %s',
+                        self._external_temp_entity_id, state.state)
+        
+        # Fall back to internal temperature sensor
+        return (self.get_prop_value(prop=self._prop_env_temperature)
+                if self._prop_env_temperature else None)
+
 
 class Thermostat(FeatureOnOff, FeatureTargetTemperature, FeatureTemperature,
                  FeatureHumidity, FeatureFanMode, FeaturePresetMode):
     """Thermostat"""
 
     def __init__(self, miot_device: MIoTDevice,
-                 entity_data: MIoTEntityData) -> None:
+                 entity_data: MIoTEntityData,
+                 external_temp_entity_id: Optional[str] = None) -> None:
         """Initialize the thermostat."""
         super().__init__(miot_device=miot_device, entity_data=entity_data)
 
@@ -712,6 +858,13 @@ class Thermostat(FeatureOnOff, FeatureTargetTemperature, FeatureTemperature,
         self._init_on_off('thermostat', 'on')
         # preset modes
         self._init_preset_modes('thermostat', 'mode')
+        
+        # Set up external temperature sensor if configured
+        self._external_temp_entity_id = external_temp_entity_id
+        if external_temp_entity_id:
+            _LOGGER.info(
+                'Using external temperature sensor %s for thermostat %s',
+                external_temp_entity_id, self.entity_id)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set the target hvac mode."""
@@ -724,6 +877,31 @@ class Thermostat(FeatureOnOff, FeatureTargetTemperature, FeatureTemperature,
         """The current hvac mode."""
         return (HVACMode.AUTO if self.get_prop_value(
             prop=self._prop_on) else HVACMode.OFF)
+    
+    @property
+    def current_temperature(self) -> Optional[float]:
+        """The current temperature - use external sensor if configured."""
+        if self._external_temp_entity_id:
+            # Use external temperature sensor
+            state = self.hass.states.get(self._external_temp_entity_id)
+            if state is not None and state.state not in ['unknown', 'unavailable']:
+                try:
+                    temp_value = float(state.state)
+                    # Validate temperature range (reasonable values between -50 and 100 Celsius)
+                    if -50 <= temp_value <= 100:
+                        return temp_value
+                    else:
+                        _LOGGER.warning(
+                            'External temperature value %s from %s is out of range',
+                            temp_value, self._external_temp_entity_id)
+                except (ValueError, TypeError):
+                    _LOGGER.warning(
+                        'Invalid external temperature value from %s: %s',
+                        self._external_temp_entity_id, state.state)
+        
+        # Fall back to internal temperature sensor
+        return (self.get_prop_value(prop=self._prop_env_temperature)
+                if self._prop_env_temperature else None)
 
 
 class ElectricBlanket(FeatureOnOff, FeatureTargetTemperature,
@@ -731,7 +909,8 @@ class ElectricBlanket(FeatureOnOff, FeatureTargetTemperature,
     """Electric blanket"""
 
     def __init__(self, miot_device: MIoTDevice,
-                 entity_data: MIoTEntityData) -> None:
+                 entity_data: MIoTEntityData,
+                 external_temp_entity_id: Optional[str] = None) -> None:
         """Initialize the electric blanket."""
         super().__init__(miot_device=miot_device, entity_data=entity_data)
 
@@ -742,6 +921,13 @@ class ElectricBlanket(FeatureOnOff, FeatureTargetTemperature,
         self._init_on_off('electric-blanket', 'on')
         # preset modes
         self._init_preset_modes('electric-blanket', 'mode')
+        
+        # Set up external temperature sensor if configured
+        self._external_temp_entity_id = external_temp_entity_id
+        if external_temp_entity_id:
+            _LOGGER.info(
+                'Using external temperature sensor %s for electric blanket %s',
+                external_temp_entity_id, self.entity_id)
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set the target hvac mode."""
@@ -761,3 +947,21 @@ class ElectricBlanket(FeatureOnOff, FeatureTargetTemperature,
         if self.hvac_mode == HVACMode.OFF:
             return HVACAction.OFF
         return HVACAction.HEATING
+
+    @property
+    def current_temperature(self) -> Optional[float]:
+        """The current temperature - use external sensor if configured."""
+        if self._external_temp_entity_id:
+            # Use external temperature sensor
+            state = self.hass.states.get(self._external_temp_entity_id)
+            if state is not None and state.state not in ['unknown', 'unavailable']:
+                try:
+                    return float(state.state)
+                except (ValueError, TypeError):
+                    _LOGGER.warning(
+                        'Invalid external temperature value from %s: %s',
+                        self._external_temp_entity_id, state.state)
+        
+        # Fall back to internal temperature sensor
+        return (self.get_prop_value(prop=self._prop_env_temperature)
+                if self._prop_env_temperature else None)
