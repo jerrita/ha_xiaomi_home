@@ -432,6 +432,10 @@ class FeatureTemperature(MIoTServiceEntity, ClimateEntity):
         # Get the state of the external temperature sensor
         state: State = self.hass.states.get(self._external_temperature_entity_id)
         if state is None or state.state in ['unknown', 'unavailable']:
+            if state is None:
+                _LOGGER.warning("State: None!")
+            else:
+                _LOGGER.debug("state of temperature is: %s", state.state)
             return None
         try:
             return float(state.state)
