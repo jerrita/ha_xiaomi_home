@@ -80,7 +80,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry,
             # Create the entity first to get its entity_id
             entity = AirConditioner(miot_device=miot_device, entity_data=data)
             entity_id = entity.entity_id
+            _LOGGER.debug("pre: SetupEntry with entity: %s", entity)
             external_temp_entity_id = external_temp_sensors.get(entity_id)
+            _LOGGER.debug("pre: SetupEntry with extemp: %s", external_temp_entity_id)
             if external_temp_entity_id:
                 # Recreate with external temp sensor
                 entity = AirConditioner(miot_device=miot_device, entity_data=data,
@@ -587,6 +589,8 @@ class AirConditioner(FeatureOnOff, FeatureTargetTemperature,
         self._init_on_off('air-conditioner', 'on')
         
         # Set up external temperature sensor if configured
+        _LOGGER.info("AirConditioner %s is initializiong with extern_temp: %s",
+                     self.entity_id, external_temp_entity_id)
         self._external_temp_entity_id = external_temp_entity_id
         if external_temp_entity_id:
             _LOGGER.info(
