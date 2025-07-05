@@ -412,6 +412,10 @@ class FeatureTemperature(MIoTServiceEntity, ClimateEntity):
                 self._prop_env_temperature = prop
                 break
 
+    def set_external_temperature_sensor(self, external_temperature_entity_id: str):
+        _LOGGER.debug("External temp sensor set to: %d", external_temperature_entity_id)
+        self._external_temperature_entity_id = external_temperature_entity_id
+
     @property
     def current_temperature(self) -> Optional[float]:
         """The current environment temperature."""
@@ -419,7 +423,7 @@ class FeatureTemperature(MIoTServiceEntity, ClimateEntity):
         if self._prop_env_temperature:
             return self.get_prop_value(prop=self._prop_env_temperature)
 
-        _LOGGER.debug("pre: Using external temperature")
+        _LOGGER.debug("pre: Using external temperature with id: %s", self._external_temperature_entity_id)
         if not self._external_temperature_entity_id:
             return None
         
@@ -591,7 +595,7 @@ class AirConditioner(FeatureOnOff, FeatureTargetTemperature,
         # Set up external temperature sensor if configured
         _LOGGER.info("AirConditioner %s is initializiong with extern_temp: %s",
                      self.entity_id, external_temp_entity_id)
-        self._external_temp_entity_id = external_temp_entity_id
+        self.set_external_temperature_sensor(external_temp_entity_id)
         if external_temp_entity_id:
             _LOGGER.info(
                 'Using external temperature sensor %s for air conditioner %s',
